@@ -15,8 +15,8 @@ knitr::opts_chunk$set(cache = TRUE, dev.args = list(bg = 'transparent'),
 theme_set(theme_bw(base_size=12))
 ```
 
-```{r JEPXdata, echo=FALSE, message=FALSE}
-load("../../data/JEPX_price.RData")
+```{r JEPXdata, message=FALSE}
+load("data/JEPX_price.RData")
 
 # Use every 7 observations (weekly averages)
 jepx <- jepx %>%
@@ -29,8 +29,8 @@ jepx <- jepx %>%
   mutate(lprice_resid = mod$residuals, lprice_fit = mod$fitted.values)
 ```
 
-```{r NuukData, echo=FALSE, message=FALSE}
-Nuuk <- read_table2("../../data/nuuk.dat.txt", 
+```{r NuukData, message=FALSE}
+Nuuk <- read_table2("data/nuuk.dat.txt", 
                     col_names = c("Year", 1:12), 
                     na = "-999", 
                     skip = 1) %>% 
