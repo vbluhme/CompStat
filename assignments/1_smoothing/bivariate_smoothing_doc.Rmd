@@ -58,9 +58,9 @@ df <- tibble(x, y)
 
 
 ```{r}
-p <- ggplot(df, aes(x, y)) +
+pp <- ggplot(df, aes(x, y)) +
   geom_point()
-p
+pp
 ```
 
 ## Splines
@@ -135,8 +135,7 @@ qplot(lambda, GCV) + geom_vline(xintercept = lambda_opt, color = "red")
 We can test that this works:
 
 ```{r}
-p +
-  geom_line(aes(y = smoother(lambda_opt)), col = "red")
+pp + geom_line(aes(y = smoother(lambda_opt)), col = "red")
 ```
 
 Steps for efficient calculation of $\mathbf S_\lambda = \boldsymbol\Phi(\boldsymbol\Phi'\boldsymbol\Phi + \lambda\boldsymbol\Omega)^{-1}\boldsymbol\Phi'$
@@ -151,7 +150,7 @@ Steps for efficient calculation of $\mathbf S_\lambda = \boldsymbol\Phi(\boldsym
 \end{equation}
 for $\widetilde U = UW$.
 
-Interpretation of Equation (\ref{eq:S_decomp}):
+Step-by-step version for implementation:
 
 - First, the coefficients $\hat\beta = \widetilde U'y$ are computed for expanding $y$ in the basis given by the columns of $\widetilde U$.
 
@@ -160,55 +159,44 @@ Interpretation of Equation (\ref{eq:S_decomp}):
 \hat\beta_i(\lambda) = \frac{\hat\beta_i}{1+\lambda\gamma_i}.
 \]
 
-- Third, the smoothed values $\widetilde U\hat\beta_i(\lambda) are computed as an expansion using the shrunken coefficients.
+- Third, the smoothed values $\widetilde U\hat\beta_i(\lambda)$ are computed as an expansion using the shrunken coefficients.
 
 ```{r}
-### THIS CHUNK TAKES ABOUT 100ms to run. Calculate only once!
-Phi <- splineDesign(c(rep(range(x), 3), x), x)
-Omega <- pen_mat(x)
+p <- 20
+inner_knots <- seq(min(x), max(x), length.out = p-2)
+Phi <- splineDesign(c(rep(range(inner_knots), 3), inner_knots), x)
+Omega <- pen_mat(inner_knots)
 
 Phi_svd <- svd(Phi)
 Omega_tilde <- t(crossprod(Phi_svd$v, Omega %*% Phi_svd$v)) / Phi_svd$d
 Omega_tilde <- t(Omega_tilde) / Phi_svd$d
 Omega_tilde_svd <- svd(Omega_tilde)  
 U_tilde <- Phi_svd$u %*% Omega_tilde_svd$u
-###
-
-# Original evaluation
-S1 <- Phi %*% solve(crossprod(Phi) + lambda_opt * Omega, t(Phi))
-f1 <- S1 %*% y
-
-# Decomposition, matrix multiplication
-S2 <- U_tilde %*% solve(diag(length(x)) + lambda_opt*diag(Omega_tilde_svd$d), t(U_tilde))
-f2 <- S2 %*% y
 
 # Decomposition, but fast
-f3 <- t(U_tilde) %*% y
-f3 <- f3 / (1 + lambda_opt*Omega_tilde_svd$d)
-f3 <- U_tilde %*% f3
+f_hat <- t(U_tilde) %*% y
+f_hat <- f_hat / (1 + lambda_opt*Omega_tilde_svd$d)
+f_hat <- U_tilde %*% f_hat
 
-# f2 and f3 are equal
-range(f2-f3)
 
-# We do not get same splines in corners!
-p + geom_line(aes(y = f1), col = "red") + geom_line(aes(y = f2), col = "blue")
+pp + geom_line(aes(y = f_hat), col = "red")
 ```
 
-Why do they diverge? Because the first and last columns of $\mathbf S_\lambda$ diverge. Compare columns of matrices:
+Warning: When $n < p$, the decomposition does not hold! This is why the splines diverge.
 
-```{r, warning = FALSE, out.width = "100%"}
-plot_cols <- function(S, col_vec) {
+```{r, out.width = "100%", warning = FALSE}
+plot_cols <- function(S, col_vec = 1:ncol(S)) {
   S %>% as_tibble() %>% mutate(n = row_number()) %>% pivot_longer(-n) %>% 
-  mutate(name = as.numeric(str_replace(name, "V", ""))) %>% 
+  mutate(name = str_replace(name, "V", ""),
+         name = factor(name, levels = unique(name))) %>% 
   filter(name %in% col_vec) %>% 
-  arrange(name, n) %>% 
-  mutate(name = as.factor(name)) %>% 
   ggplot(aes(x = n, y = value, col = name)) +
   geom_line() +
   facet_wrap(~ name) +
   theme(legend.position = "none")
 }
 
-plot_cols(S1-S2, c(1:10, 138:147))
+plot_cols(U_tilde)
 ```
+
 
