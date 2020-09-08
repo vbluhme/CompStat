@@ -104,7 +104,7 @@ pen_mat <- function(inner_knots) {
 }
 ```
 
-We are now ready to write our first smoother function:
+We are now ready to write our first (slow) smoother function:
 
 ```{r}
 Phi <- splineDesign(c(rep(range(x), 3), x), x)
@@ -138,3 +138,31 @@ We can test that this works:
 p +
   geom_line(aes(y = smoother(lambda_opt)), col = "red")
 ```
+
+Steps for efficient calculation of $\mathbf S_\lambda = \boldsymbol\Phi(\boldsymbol\Phi'\boldsymbol\Phi + \lambda\boldsymbol\Omega)^{-1}\boldsymbol\Phi'$
+
+1. Single-value decomposition $\Phi = UDV'$.
+
+2. Diagonalize the matrix $D^{-1}V'\Phi VD^{-1} = W\Gamma W'$.
+
+3. Then 
+\begin{equation}\label{eq:S_decomp}
+\mathbf S_\lambda = \widetilde U(I + \lambda \Gamma)^{-1}\widetilde U'
+\end{equation}
+for $\widetilde U = UW$.
+
+Interpretation of Equation (\ref{eq:S_decomp}):
+
+- First, the coefficients $\hat\beta = \widetilde U'y$ are computed for expanding $y$ in the basis given by the columns of $\widetilde U$.
+
+- Second, the $i$-th coefficient is shrunk towards $0$,
+\[
+\hat\beta_i(\lambda) = \frac{\hat\beta_i}{1+\lambda\gamma_i}.
+\]
+
+- Third, the smoothed values $\widetilde U\hat\beta_i(\lambda) are computed as an expansion using the shrunken coefficients.
+
+```{r}
+# TO-DO: Implement this
+```
+
