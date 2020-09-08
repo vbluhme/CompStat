@@ -163,6 +163,52 @@ Interpretation of Equation (\ref{eq:S_decomp}):
 - Third, the smoothed values $\widetilde U\hat\beta_i(\lambda) are computed as an expansion using the shrunken coefficients.
 
 ```{r}
-# TO-DO: Implement this
+### THIS CHUNK TAKES ABOUT 100ms to run. Calculate only once!
+Phi <- splineDesign(c(rep(range(x), 3), x), x)
+Omega <- pen_mat(x)
+
+Phi_svd <- svd(Phi)
+Omega_tilde <- t(crossprod(Phi_svd$v, Omega %*% Phi_svd$v)) / Phi_svd$d
+Omega_tilde <- t(Omega_tilde) / Phi_svd$d
+Omega_tilde_svd <- svd(Omega_tilde)  
+U_tilde <- Phi_svd$u %*% Omega_tilde_svd$u
+###
+
+# Original evaluation
+S1 <- Phi %*% solve(crossprod(Phi) + lambda_opt * Omega, t(Phi))
+f1 <- S1 %*% y
+
+# Decomposition, matrix multiplication
+S2 <- U_tilde %*% solve(diag(length(x)) + lambda_opt*diag(Omega_tilde_svd$d), t(U_tilde))
+f2 <- S2 %*% y
+
+# Decomposition, but fast
+f3 <- t(U_tilde) %*% y
+f3 <- f3 / (1 + lambda_opt*Omega_tilde_svd$d)
+f3 <- U_tilde %*% f3
+
+# f2 and f3 are equal
+range(f2-f3)
+
+# We do not get same splines in corners!
+p + geom_line(aes(y = f1), col = "red") + geom_line(aes(y = f2), col = "blue")
+```
+
+Why do they diverge? Because the first and last columns of $\mathbf S_\lambda$ diverge. Compare columns of matrices:
+
+```{r, warning = FALSE, out.width = "100%"}
+plot_cols <- function(S, col_vec) {
+  S %>% as_tibble() %>% mutate(n = row_number()) %>% pivot_longer(-n) %>% 
+  mutate(name = as.numeric(str_replace(name, "V", ""))) %>% 
+  filter(name %in% col_vec) %>% 
+  arrange(name, n) %>% 
+  mutate(name = as.factor(name)) %>% 
+  ggplot(aes(x = n, y = value, col = name)) +
+  geom_line() +
+  facet_wrap(~ name) +
+  theme(legend.position = "none")
+}
+
+plot_cols(S1-S2, c(1:10, 138:147))
 ```
 
