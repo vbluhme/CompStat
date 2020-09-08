@@ -1,0 +1,21 @@
+---
+title: "Bivariate Smoothing"
+author: "Viktor Bluhme Jeppesen and Malte Nikolajsen"
+date: "17 September 2020"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## To-do
+
+- Implement a smoothing spline smoother using LOOCV for selecting the tuning parameter $\lambda$.
+  - Using B-spline basis functions and their derivatives from `splines::splineDesign`
+
+- Test implementation and compate with `smooth.spline`.
+
+- Test on real data and simulated data (benchmarking, profiling)
+
+Use matrix decompositions to speed up LOOCV.
