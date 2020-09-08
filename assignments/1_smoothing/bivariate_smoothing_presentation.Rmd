@@ -14,8 +14,10 @@ knitr::opts_chunk$set(echo = FALSE)
 - Implement a smoothing spline smoother using LOOCV for selecting the tuning parameter $\lambda$.
   - Using B-spline basis functions and their derivatives from `splines::splineDesign`
 
-- Test implementation and compate with `smooth.spline`.
+- Test implementation and compare with `smooth.spline`.
 
 - Test on real data and simulated data (benchmarking, profiling)
 
 Use matrix decompositions to speed up LOOCV.
+
+Link to CSwR chapter: [Bivariate smoothing](https://cswr.nrhstat.org/3-bivariate.html).
