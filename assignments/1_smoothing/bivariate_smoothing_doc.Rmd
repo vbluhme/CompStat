@@ -7,59 +7,134 @@ output: html_document
 
 ```{r setup, include=FALSE}
 library(tidyverse)
+library(splines)
+
 knitr::opts_chunk$set(cache = TRUE, dev.args = list(bg = 'transparent'), 
                       fig.align = "center", fig.pos="h", cache.lazy = TRUE,
                       out.width = "70%")
-load("../../data/JEPX_price.RData")
 theme_set(theme_bw(base_size=12))
 ```
 
-# Data import
+```{r JEPXdata, echo=FALSE, message=FALSE}
+load("../../data/JEPX_price.RData")
+
+# Use every 7 observations (weekly averages)
+jepx <- jepx %>%
+  mutate(n = n %/% 7) %>% 
+  group_by(n) %>% 
+  summarise(date = min(date), lprice = mean(lprice))
+
+mod <- lm(lprice ~ (sin(2*pi*n/25.8) + cos(2*pi*n/25.8))*poly(n, degree = 3), jepx)
+jepx <- jepx %>%
+  mutate(lprice_resid = mod$residuals, lprice_fit = mod$fitted.values)
+```
+
+```{r NuukData, echo=FALSE, message=FALSE}
+Nuuk <- read_table2("../../data/nuuk.dat.txt", 
+                    col_names = c("Year", 1:12), 
+                    na = "-999", 
+                    skip = 1) %>% 
+  gather(key = "Month", value = "Temperature", -Year, convert = TRUE) %>% 
+  mutate(Temperature = Temperature / 10) %>% 
+  filter(Year > 1866)
+Nuuk_year <- group_by(Nuuk, Year) %>% 
+  summarise(
+    Temperature = mean(Temperature),
+    Median = median(Temperature),
+    High = max(Temperature), 
+    Low = min(Temperature)
+  )
+n <- nrow(Nuuk_year)
+```
+
+Form dataframe. Can select from `Nuuk_year` or `jepx`.
 
 ```{r}
-p_jepx <- ggplot(jepx, aes(x = date, y = lprice)) +
+x <- Nuuk_year$Year
+y <- Nuuk_year$Temperature
+
+df <- tibble(x, y)
+```
+
+
+```{r}
+p <- ggplot(df, aes(x, y)) +
   geom_point()
-p_jepx
+p
 ```
 
-# Running mean
+## Splines
+
+Given points $\{(x_1,y_1), \dots, (x_n, y_n)\}$, we want to implement the smoother which solves
+\[
+\min_{f \in C^2}\quad L(f) = \sum_{i=1}^n\big(y_i - f(x_i)\big)^2 + \lambda \|f''\|_2^2
+\]
+All solutions belong to the $n$-dimensional vector space consisting of cubic splines with knots in $\mathbf x = (x_1, \dots, x_n)$, independently of $\mathbf y$. Thus all candidate solutions can be written
+\[
+f = \sum_{i=1}^n \beta_i \varphi_i
+\]
+for a basis $\varphi_1, \dots, \varphi_n$ of cubic splines, or more concisely $\mathbf f = \boldsymbol \Phi \beta$ for $\mathbf f = (f(x_1), \dots, f(x_n))$ and $\boldsymbol \Phi_{ij} = \varphi_j(x_i)$. We use this to rewrite the loss function as
+\[
+L(f) = (\mathbf y - \boldsymbol \Phi\beta)'(\mathbf y - \boldsymbol \Phi\beta) + \lambda\beta'\boldsymbol \Omega\beta
+\]
+where
+\[
+\boldsymbol \Omega_{ij} = \langle\varphi_i'', \varphi_j''\rangle = \int \varphi_i''\varphi_j''\, dm.
+\]
+The minimizer is given by
+\[
+\hat{\mathbf{f}} = \boldsymbol\Phi(\boldsymbol\Phi'\boldsymbol\Phi + \lambda\boldsymbol\Omega)^{-1}\boldsymbol\Phi'\mathbf y \equiv \mathbf S_\lambda\mathbf y.
+\]
+We must overcome two computational challenges, namely 1) how to evaluate $\boldsymbol\Omega$ and 2) how to efficiently calculate $\mathbf S_{\lambda}$.
+
+First, we find a function to evaluate $\boldsymbol\Omega$. From CSwR, using Simpson's rule:
 
 ```{r}
-# The vector 'y' must be sorted according to the x-values
-run_mean <- function(y, k) {
-  n <- length(y)
-  m <- floor((k - 1) / 2)
-  k <- 2 * m + 1           # Ensures k to be odd and m = (k-1) / 2
-  y <- y / k
-  s <- rep(NA, n)
-  s[m + 1] <- sum(y[1:k])
-  for(i in (m + 1):(n - m - 1)) 
-    s[i + 1] <- s[i] - y[i - m] + y[i + 1 + m]
-  s
+pen_mat <- function(inner_knots) {
+  knots <- sort(c(rep(range(inner_knots), 3), inner_knots))
+  d <- diff(inner_knots)  # The vector of knot differences; b - a 
+  g_ab <- splineDesign(knots, inner_knots, derivs = 2) 
+  knots_mid <- inner_knots[-length(inner_knots)] + d / 2
+  g_ab_mid <- splineDesign(knots, knots_mid, derivs = 2)
+  g_a <- g_ab[-nrow(g_ab), ]
+  g_b <- g_ab[-1, ]
+  (crossprod(d * g_a,  g_a) + 
+      4 * crossprod(d * g_ab_mid, g_ab_mid) + 
+      crossprod(d * g_b, g_b)) / 6 
+}
+```
+
+We are now ready to write our first smoother function:
+
+```{r}
+Phi <- splineDesign(c(rep(range(x), 3), x), x)
+Omega <- pen_mat(x)
+  
+smoother <- function(lambda) {
+  Phi %*% solve(
+    crossprod(Phi) + lambda * Omega, 
+    t(Phi) %*% y
+  )
 }
 ```
 
 
 ```{r}
-p_jepx + geom_line(aes(y = run_mean(lprice, 100)), col = "blue")
-```
-
-```{r}
-loocv <- function(k, y) {
-  f_hat <- run_mean(y, k)
-  mean(((y - f_hat) / (1 - 1/k))^2, na.rm = TRUE) 
+gcv <- function(lambda) {
+  S <- Phi %*% solve(crossprod(Phi) + lambda * Omega, t(Phi))
+  df <- sum(diag(S))  # The trace of the smoother matrix
+  sum(((y - S %*% y) / (1 - df / length(y)))^2, na.rm = TRUE) 
 }
 
-k <- seq(3, 100, 2)
-CV <- sapply(k, loocv, y = jepx$lprice)
-k_opt <- k[which.min(CV)]
-qplot(k, CV) + geom_line() + geom_vline(xintercept = k_opt, color = "red")
+lambda <- seq(50, 250, 2)
+GCV <- sapply(lambda, gcv)
+lambda_opt <- lambda[which.min(GCV)]
+qplot(lambda, GCV) + geom_vline(xintercept = lambda_opt, color = "red")
 ```
+
+We can test that this works:
 
 ```{r}
-p_jepx + 
-  geom_line(aes(y = run_mean(lprice, 10)), color = "red") +
-  geom_line(aes(y = run_mean(lprice, 50)), color = "blue") +
-  geom_line(aes(y = run_mean(lprice, 100)), color = "purple")
+p +
+  geom_line(aes(y = smoother(lambda_opt)), col = "red")
 ```
-
