@@ -6,6 +6,60 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+knitr::opts_chunk$set(cache = TRUE, dev.args = list(bg = 'transparent'), 
+                      fig.align = "center", fig.pos="h", cache.lazy = TRUE,
+                      out.width = "70%")
+load("../../data/JEPX_price.RData")
+theme_set(theme_bw(base_size=12))
+```
+
+# Data import
+
+```{r}
+p_jepx <- ggplot(jepx, aes(x = date, y = lprice)) +
+  geom_point()
+p_jepx
+```
+
+# Running mean
+
+```{r}
+# The vector 'y' must be sorted according to the x-values
+run_mean <- function(y, k) {
+  n <- length(y)
+  m <- floor((k - 1) / 2)
+  k <- 2 * m + 1           # Ensures k to be odd and m = (k-1) / 2
+  y <- y / k
+  s <- rep(NA, n)
+  s[m + 1] <- sum(y[1:k])
+  for(i in (m + 1):(n - m - 1)) 
+    s[i + 1] <- s[i] - y[i - m] + y[i + 1 + m]
+  s
+}
+```
+
+
+```{r}
+p_jepx + geom_line(aes(y = run_mean(lprice, 100)), col = "blue")
+```
+
+```{r}
+loocv <- function(k, y) {
+  f_hat <- run_mean(y, k)
+  mean(((y - f_hat) / (1 - 1/k))^2, na.rm = TRUE) 
+}
+
+k <- seq(3, 100, 2)
+CV <- sapply(k, loocv, y = jepx$lprice)
+k_opt <- k[which.min(CV)]
+qplot(k, CV) + geom_line() + geom_vline(xintercept = k_opt, color = "red")
+```
+
+```{r}
+p_jepx + 
+  geom_line(aes(y = run_mean(lprice, 10)), color = "red") +
+  geom_line(aes(y = run_mean(lprice, 50)), color = "blue") +
+  geom_line(aes(y = run_mean(lprice, 100)), color = "purple")
 ```
 
