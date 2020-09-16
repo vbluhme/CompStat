@@ -8,6 +8,8 @@ output: html_document
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(splines)
+library(latex2exp)
+library(microbenchmark)
 
 knitr::opts_chunk$set(cache = TRUE, dev.args = list(bg = 'transparent'), 
                       fig.align = "center", fig.pos="h", cache.lazy = TRUE,
@@ -16,7 +18,7 @@ theme_set(theme_bw(base_size=12))
 ```
 
 ```{r NuukData, message=FALSE}
-Nuuk <- read_table2("C:/Users/mn/Documents/CompStat/CompStat/data/nuuk.dat.txt", 
+Nuuk <- read_table2("nuuk.dat.txt", 
                     col_names = c("Year", 1:12), 
                     na = "-999", 
                     skip = 1) %>% 
@@ -256,7 +258,7 @@ plot(x, y,
      pch = 16)
 lines(x, mySmooth$f_hat, col = "blue")
 lines(x, smooth$y, col = "red")
-legend(830, 6, col = c("blue", "red"), lwd = 1, lty = 1, legend = TeX(c("Our $\\hat{f}$", "R's $\\hat{f}$")))
+legend(10, 10, col = c("blue", "red"), lwd = 1, lty = 1, legend = TeX(c("Our $\\hat{f}$", "R's $\\hat{f}$")))
 
 #Plot of differences 
 plot(x, mySmooth$f_hat - smooth$y,
@@ -266,7 +268,7 @@ plot(x, mySmooth$f_hat - smooth$y,
      main = "Numeric difference between our implementation and R's implementation")
 range(mySmooth$f_hat - smooth$y)
 ```
-Observing the plot of the spline smoothing, the smoothers seem to be approximately the same, and as can be seen by their numeric difference, they vary at most by 0.09.  
+Observing the plot of the spline smoothing, the smoothers seem to be approximately the same, and as can be seen by their numeric difference, they vary little.  
 
 Next up would be to compare their performance.
 We expect our method to be much slower than that of `smooth.spline`.
@@ -276,7 +278,7 @@ Since we are not to test for their root-search efficiency, we will supply these 
 ```{r benchmark}
 #Simulated data
 n <- 1000
-x <- 1:n
+x <- 1:n 
 y <- c(0, cumsum(rnorm(n-1, sd = 0.6)))
 lambda_opt <- c(myLoocv(x, y, p, c(1, 200))$lambda, smooth.spline(x, y, cv = TRUE, nknots = p - 2)$lambda)
 
@@ -287,7 +289,7 @@ autoplot(myBench) + geom_jitter(position = position_jitter(0.2, 0), aes(color = 
 ```
 As foreseen, our method is much less efficient than `smooth.spline`.
 We continue the comparison by seeing the methods performance for different number of splines $p$. 
-```{r Different number of splines}
+```{r Different number of splines, cache = TRUE}
 p <- c(100, 200, 300, 400, 500, 600, 700, 800)
 lambda_opt <- rep(NA, 16)
 for(i in 1:8){
@@ -310,12 +312,39 @@ myBench <- microbenchmark(
   "Our implementation, p = 500" = myLoocv(x, y, p[5], c(1, 200), optimize = FALSE, lambda = lambda_opt[10]),
   "Our implementation, p = 600" = myLoocv(x, y, p[6], c(1, 200), optimize = FALSE, lambda = lambda_opt[12]),
   "Our implementation, p = 700" = myLoocv(x, y, p[7], c(1, 200), optimize = FALSE, lambda = lambda_opt[14]),
-  "Our implementation, p = 800" = myLoocv(x, y, p[8], c(1, 200), optimize = FALSE, lambda = lambda_opt[16])
+  "Our implementation, p = 800" = myLoocv(x, y, p[8], c(1, 200), optimize = FALSE, lambda = lambda_opt[16]),
+  times = 10L
 )
 autoplot(myBench) + geom_jitter(position = position_jitter(0.2, 0), aes(color = expr), alpha = 0.4) + aes(fill = I("gray")) + theme(legend.position = "none")
 ```
+Median time complexity of our method seems quadratic at best while that of `smooth.spline()` is linear. 
+This is of no suprise as we are computing the smoothing matrix and doing matrix multiplication.
 
-
+We conduct a similar test for the number of observations.
+```{r Different number of observations, cache = TRUE}
+p <- 150
+lambda_opt <- rep(NA, 10)
+for(i in 1:5){
+  lambda_opt[2*i] <- myLoocv(x[1:200*i], y[1:200*i], p, c(1, 200))$lambda
+  lambda_opt[2*i-1] <- smooth.spline(x[1:200*i], y[1:200*i], cv = TRUE, nknots = p)$lambda
+}
+myBench <- microbenchmark( 
+  "R's  implementation, n = 200" = smooth.spline(x[1:200], y[1:200], cv = TRUE, nknots = p - 2, lambda = lambda_opt[1]),
+  "R's  implementation, n = 400" = smooth.spline(x[1:400], y[1:400], cv = TRUE, nknots = p - 2, lambda = lambda_opt[3]),
+  "R's  implementation, n = 600" = smooth.spline(x[1:600], y[1:600], cv = TRUE, nknots = p - 2, lambda = lambda_opt[5]),
+    "R's  implementation, n = 800" = smooth.spline(x[1:800], y[1:800], cv = TRUE, nknots = p - 2, lambda = lambda_opt[5]),
+    "R's  implementation, n = 1000" = smooth.spline(x[1:1000], y[1:1000], cv = TRUE, nknots = p - 2, lambda = lambda_opt[5]),
+  "Our implementation, n = 200" = myLoocv(x[1:200], y[1:200], p, c(1, 200), optimize = FALSE, lambda = lambda_opt[2]),
+  "Our implementation, n = 400" = myLoocv(x[1:400], y[1:400], p, c(1, 200), optimize = FALSE, lambda = lambda_opt[4]),
+  "Our implementation, n = 600" = myLoocv(x[1:600], y[1:600], p, c(1, 200), optimize = FALSE, lambda = lambda_opt[6]),
+    "Our implementation, n = 800" = myLoocv(x[1:800], y[1:800], p, c(1, 200), optimize = FALSE, lambda = lambda_opt[4]),
+  "Our implementation, n = 1000" = myLoocv(x[1:1000], y[1:1000], p, c(1, 200), optimize = FALSE, lambda = lambda_opt[6]),
+  times = 50L
+)
+pp <- autoplot(myBench) + geom_jitter(position = position_jitter(0.2, 0), aes(color = expr), alpha = 0.4) + aes(fill = I("gray")) + theme(legend.position = "none")
+pp
+```
+Likewise we see that time complexity is at least quadratic for our solution and linear at worst for R's `smooth.spline`, though this comparisson is troublesome by the requirement $n < p$. 
 
 
 
