@@ -21,3 +21,50 @@ knitr::opts_chunk$set(echo = FALSE)
 Use matrix decompositions to speed up LOOCV.
 
 Link to CSwR chapter: [Bivariate smoothing](https://cswr.nrhstat.org/3-bivariate.html).
+
+## Splines
+
+Given points $\{(x_1,y_1), \dots, (x_n, y_n)\}$, we want to implement the smoother which solves
+\[
+\min_{f \in C^2}\quad L(f) = \sum_{i=1}^n\big(y_i - f(x_i)\big)^2 + \lambda \|f''\|_2^2
+\]
+All solutions belong to the $n$-dimensional vector space consisting of cubic splines with knots in $\mathbf x = (x_1, \dots, x_n)$, independently of $\mathbf y$. Thus all candidate solutions can be written
+\[
+f = \sum_{i=1}^n \beta_i \varphi_i
+\]
+for a basis $\varphi_1, \dots, \varphi_n$ of cubic splines.
+
+## Splines
+
+More concisely $\mathbf f = \boldsymbol \Phi \beta$ for $\mathbf f = (f(x_1), \dots, f(x_n))$ and $\boldsymbol \Phi_{ij} = \varphi_j(x_i)$. We use this to rewrite the loss function as
+\[
+L(f) = (\mathbf y - \boldsymbol \Phi\beta)'(\mathbf y - \boldsymbol \Phi\beta) + \lambda\beta'\boldsymbol \Omega\beta
+\]
+where
+\[
+\boldsymbol \Omega_{ij} = \langle\varphi_i'', \varphi_j''\rangle = \int \varphi_i''\varphi_j''\, dm.
+\]
+The minimizer is given by
+\[
+\hat{\mathbf{f}} = \boldsymbol\Phi(\boldsymbol\Phi'\boldsymbol\Phi + \lambda\boldsymbol\Omega)^{-1}\boldsymbol\Phi'\mathbf y \equiv \mathbf S_\lambda\mathbf y.
+\]
+We must overcome two computational challenges, namely 1) how to evaluate $\boldsymbol\Omega$ and 2) how to efficiently calculate $\mathbf S_{\lambda}$.
+
+## Penalty matrix
+
+First, we find a function to evaluate $\boldsymbol\Omega$. From CSwR, using Simpson's rule:
+
+```{r}
+pen_mat <- function(inner_knots) {
+  knots <- sort(c(rep(range(inner_knots), 3), inner_knots))
+  d <- diff(inner_knots)  # The vector of knot differences; b - a 
+  g_ab <- splineDesign(knots, inner_knots, derivs = 2) 
+  knots_mid <- inner_knots[-length(inner_knots)] + d / 2
+  g_ab_mid <- splineDesign(knots, knots_mid, derivs = 2)
+  g_a <- g_ab[-nrow(g_ab), ]
+  g_b <- g_ab[-1, ]
+  (crossprod(d * g_a,  g_a) + 
+      4 * crossprod(d * g_ab_mid, g_ab_mid) + 
+      crossprod(d * g_b, g_b)) / 6 
+}
+```

@@ -1354,11 +1354,6 @@ opacity: 0;
 }
 @media print {
 
-@page {
-size: landscape;
-margin: 0;
-}
-
 slides slide {
 display: block !important;
 position: relative;
@@ -3119,7 +3114,7 @@ slide:not(.current) .plotly.html-widget{
         <!-- The content of this hgroup is replaced programmatically through the slide_config.json. -->
     <hgroup class="auto-fadein">
       <h1 data-config-title><!-- populated from slide_config.json --></h1>
-      
+      <h2 data-config-subtitle><!-- populated from slide_config.json --></h2>
       <p data-config-presenter><!-- populated from slide_config.json --></p>
             <p style="margin-top: 6px; margin-left: -2px;">17 September 2020</p>
           </hgroup>
@@ -3128,7 +3123,7 @@ slide:not(.current) .plotly.html-widget{
 <slide class=""><hgroup><h2>To-do</h2></hgroup><article  id="to-do">
 
 <ul>
-<li><p>Implement a smoothing spline smoother using LOOCV for selecting the tuning parameter \(\lambda\).</p>
+<li>Implement a smoothing spline smoother using LOOCV for selecting the tuning parameter \(\lambda\).
 
 <ul>
 <li>Using B-spline basis functions and their derivatives from <code>splines::splineDesign</code></li>
@@ -3139,7 +3134,35 @@ slide:not(.current) .plotly.html-widget{
 
 <p>Use matrix decompositions to speed up LOOCV.</p>
 
-<p>Link to CSwR chapter: <a href='https://cswr.nrhstat.org/3-bivariate.html' title=''>Bivariate smoothing</a>.</p></article></slide>
+<p>Link to CSwR chapter: <a href='https://cswr.nrhstat.org/3-bivariate.html' title=''>Bivariate smoothing</a>.</p>
+
+</article></slide><slide class=""><hgroup><h2>Splines</h2></hgroup><article  id="splines">
+
+<p>Given points \(\{(x_1,y_1), \dots, (x_n, y_n)\}\), we want to implement the smoother which solves \[
+\min_{f \in C^2}\quad L(f) = \sum_{i=1}^n\big(y_i - f(x_i)\big)^2 + \lambda \|f&#39;&#39;\|_2^2
+\] All solutions belong to the \(n\)-dimensional vector space consisting of cubic splines with knots in \(\mathbf x = (x_1, \dots, x_n)\), independently of \(\mathbf y\). Thus all candidate solutions can be written \[
+f = \sum_{i=1}^n \beta_i \varphi_i
+\] for a basis \(\varphi_1, \dots, \varphi_n\) of cubic splines.</p>
+
+</article></slide><slide class=""><hgroup><h2>Splines</h2></hgroup><article  id="splines-1">
+
+<p>More concisely \(\mathbf f = \boldsymbol \Phi \beta\) for \(\mathbf f = (f(x_1), \dots, f(x_n))\) and \(\boldsymbol \Phi_{ij} = \varphi_j(x_i)\). We use this to rewrite the loss function as \[
+L(f) = (\mathbf y - \boldsymbol \Phi\beta)&#39;(\mathbf y - \boldsymbol \Phi\beta) + \lambda\beta&#39;\boldsymbol \Omega\beta
+\] where \[
+\boldsymbol \Omega_{ij} = \langle\varphi_i&#39;&#39;, \varphi_j&#39;&#39;\rangle = \int \varphi_i&#39;&#39;\varphi_j&#39;&#39;\, dm.
+\] The minimizer is given by \[
+\hat{\mathbf{f}} = \boldsymbol\Phi(\boldsymbol\Phi&#39;\boldsymbol\Phi + \lambda\boldsymbol\Omega)^{-1}\boldsymbol\Phi&#39;\mathbf y \equiv \mathbf S_\lambda\mathbf y.
+\] We must overcome two computational challenges, namely 1) how to evaluate \(\boldsymbol\Omega\) and 2) how to efficiently calculate \(\mathbf S_{\lambda}\).</p>
+
+</article></slide><slide class=""><hgroup><h2>Penalty matrix</h2></hgroup><article  id="penalty-matrix">
+
+<p>First, we find a function to evaluate \(\boldsymbol\Omega\). From CSwR, using Simpson’s rule:</p>
+
+</article></slide><slide class=""><hgroup><h2>Hejsa</h2></hgroup><article  id="hejsa">
+
+<p>pen_mat &lt;- function(inner_knots) { knots &lt;- sort(c(rep(range(inner_knots), 3), inner_knots)) d &lt;- diff(inner_knots) # The vector of knot differences; b - a g_ab &lt;- splineDesign(knots, inner_knots, derivs = 2) knots_mid &lt;- inner_knots[-length(inner_knots)] + d / 2 g_ab_mid &lt;- splineDesign(knots, knots_mid, derivs = 2) g_a &lt;- g_ab[-nrow(g_ab), ] g_b &lt;- g_ab[-1, ] (crossprod(d * g_a, g_a) + 4 * crossprod(d * g_ab_mid, g_ab_mid) + crossprod(d * g_b, g_b)) / 6 }</p>
+
+</article></slide><slide class=""><hgroup><h2>Hejsa</h2></hgroup><article  id="hejsa-1"></article></slide>
 
 
   <slide class="backdrop"></slide>
