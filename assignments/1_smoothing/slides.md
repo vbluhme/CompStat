@@ -1,7 +1,7 @@
-slides
+Bivariate Smoothing
 ========================================================
-author: 
-date: 
+author: Viktor Bluhme Jeppesen and Malte Nikolajsen
+date: 17 September 2020
 autosize: true
 width: 1440
 height: 900
@@ -52,73 +52,25 @@ The minimizer is given by
 \[
 \hat{\mathbf{f}} = \boldsymbol\Phi(\boldsymbol\Phi'\boldsymbol\Phi + \lambda\boldsymbol\Omega)^{-1}\boldsymbol\Phi'\mathbf y \equiv \mathbf S_\lambda\mathbf y.
 \]
-We must overcome two computational challenges, namely 1) how to evaluate $\boldsymbol\Omega$ and 2) how to efficiently calculate $\mathbf S_{\lambda}$.
+Challenges:
+
+- How to evaluate $\boldsymbol\Omega$
+
+- How to choose smoothing parameter $\lambda$
+
+- How to efficiently calculate $\mathbf S_{\lambda}$.
 
 Penalty matrix
 ========================================================
 
-From CSwR, using Simpson's rule:
+With $g_{ij} = \phi_i'' \phi_j''$, it holds for two consecutive knots $a$ and $b$ that
+\[
+\int_a^b g_{ij}(x)dx = \frac{b-a}{6}\left(g_{ij}(a) + g_{ij}\left(\frac{a+b}{2}\right) + g_{ij}(b)\right)
+,\]
+so $\boldsymbol \Omega_{ij}$ can be evaluated exactly.
 
+Code for this computation can be found in CSwR.
 
-```r
-pen_mat <- function(inner_knots) {
-  knots <- sort(c(rep(range(inner_knots), 3), inner_knots))
-  d <- diff(inner_knots)  # The vector of knot differences; b - a 
-  g_ab <- splineDesign(knots, inner_knots, derivs = 2) 
-  knots_mid <- inner_knots[-length(inner_knots)] + d / 2
-  g_ab_mid <- splineDesign(knots, knots_mid, derivs = 2)
-  g_a <- g_ab[-nrow(g_ab), ]
-  g_b <- g_ab[-1, ]
-  (crossprod(d * g_a,  g_a) + 
-      4 * crossprod(d * g_ab_mid, g_ab_mid) + 
-      crossprod(d * g_b, g_b)) / 6 
-}
-```
-
-Simple smoother function
-========================================================
-We are now ready to write our first (slow) smoother function (using GCV as oppossed to LOOCV):
-
-
-```r
-Phi <- splineDesign(c(rep(range(x), 3), x), x)
-Omega <- pen_mat(x)
-  
-smoother <- function(lambda) {
-  Phi %*% solve(
-    crossprod(Phi) + lambda * Omega, 
-    t(Phi) %*% y
-  )
-}
-```
-
-Simple smoother function
-========================================================
-
-
-```r
-gcv <- function(lambda) {
-  S <- Phi %*% solve(crossprod(Phi) + lambda * Omega, t(Phi))
-  df <- sum(diag(S))  # The trace of the smoother matrix
-  sum(((y - S %*% y) / (1 - df / length(y)))^2, na.rm = TRUE) 
-}
-
-lambda <- seq(50, 250, 2)
-GCV <- sapply(lambda, gcv)
-lambda_opt <- NULL
-lambda_opt$gcv <- lambda[which.min(GCV)]
-```
-
-
-Simple smoother function
-========================================================
-<img src="slides-figure/unnamed-chunk-4-1.png" title="plot of chunk unnamed-chunk-4" alt="plot of chunk unnamed-chunk-4" width="40%" style="display: block; margin: auto;" />
-
-Simple smoother function
-========================================================
-We can test that this works:
-
-<img src="slides-figure/unnamed-chunk-5-1.png" title="plot of chunk unnamed-chunk-5" alt="plot of chunk unnamed-chunk-5" width="40%" style="display: block; margin: auto;" />
 
 
 Efficient computation
@@ -135,57 +87,95 @@ $$
 $$
 for $\widetilde U = UW$.
 
-Step-by-step version for implementation:
+In practise: 
 
-- First, the coefficients $\hat\beta = \widetilde U'y$ are computed for expanding $y$ in the basis given by the columns of $\widetilde U$.
+- Calculate $\hat\beta = \widetilde U' y$
+- Shrink towards zero, $\hat\beta_i(\lambda) = \frac{\hat\beta_i}{1+\lambda \gamma_i}$
+- Calculate $\hat{\mathbf{f}} = \widetilde U \hat\beta(\lambda)$.
 
-- Second, the $i$-th coefficient is shrunk towards $0$,
-\[
-\hat\beta_i(\lambda) = \frac{\hat\beta_i}{1+\lambda\gamma_i}.
-\]
-
-- Third, the smoothed values $\widetilde U\hat\beta_i(\lambda)$ are computed as an expansion using the shrunken coefficients.
+Note: Shrink in orthonormal basis given by columns of $\widetilde U$.
 
 Efficient computation: Example
 ========================================================
 
 ```r
-p <- 20
-inner_knots <- seq(min(x), max(x), length.out = p-2)
-Phi <- splineDesign(c(rep(range(inner_knots), 3), inner_knots), x)
-Omega <- pen_mat(inner_knots)
-
-Phi_svd <- svd(Phi)
-Omega_tilde <- t(crossprod(Phi_svd$v, Omega %*% Phi_svd$v)) / Phi_svd$d
-Omega_tilde <- t(Omega_tilde) / Phi_svd$d
-Omega_tilde_svd <- svd(Omega_tilde)  
-U_tilde <- Phi_svd$u %*% Omega_tilde_svd$u
-
-# Decomposition, but fast
-f_hat <- t(U_tilde) %*% y
-f_hat <- f_hat / (1 + lambda_opt$gcv*Omega_tilde_svd$d)
-f_hat <- U_tilde %*% f_hat
+my_first_smoother <- function(lambda, x, y, p) {
+  inner_knots <- seq(min(x), max(x), length.out = p-2)
+  Phi <- splineDesign(c(rep(range(inner_knots), 3), inner_knots), x)
+  Omega <- pen_mat(inner_knots)
+  
+  Phi_svd <- svd(Phi)
+  Omega_tilde <-
+    t(crossprod(Phi_svd$v, Omega %*% Phi_svd$v)) / Phi_svd$d
+  Omega_tilde <- t(Omega_tilde) / Phi_svd$d
+  Omega_tilde_svd <- svd(Omega_tilde)  
+  U_tilde <- Phi_svd$u %*% Omega_tilde_svd$u
+  
+  f_hat <- t(U_tilde) %*% y
+  f_hat <- f_hat / (1 + lambda*Omega_tilde_svd$d)
+  f_hat <- U_tilde %*% f_hat
+  
+  return(f_hat)
+}
 ```
 
 Efficient computation: Example
 ========================================================
-<img src="slides-figure/unnamed-chunk-7-1.png" title="plot of chunk unnamed-chunk-7" alt="plot of chunk unnamed-chunk-7" width="60%" style="display: block; margin: auto;" />
 
+Different values of $\lambda$ give different levels of smoothness. Here for $\lambda = 1, 50, 1000$.
 
-Spline divergence
+<img src="slides-figure/unnamed-chunk-3-1.png" title="plot of chunk unnamed-chunk-3" alt="plot of chunk unnamed-chunk-3" width="60%" style="display: block; margin: auto;" />
+
+Choice of λ
 ========================================================
-When $n < p$, the decomposition does not hold! This is why the splines diverge.
 
-<img src="slides-figure/unnamed-chunk-9-1.png" title="plot of chunk unnamed-chunk-9" alt="plot of chunk unnamed-chunk-9" width="40%" style="display: block; margin: auto;" />
+We use LOOCV (Leave-One-Out Cross Validation), minimizing
+\[
+\mathrm{LOOCV} = \sum_{i=1}^n (y_i - \hat{\mathbf{f}}_i^{-i})^2 = \sum_{i=1}^n\left(\frac{y_i - \hat{\mathbf{f}}_i}{1 - \mathbf S_{ii}}\right)
+\]
+over $\lambda$.
+
+Problem: This requires the diagonal of $\mathbf S$, which requires the computation of $\mathbf S$.
+
+Much easier if $\mathbf S_{ii}$ replaced by $\mathrm{tr}(\mathbf S) / n$, since
+\[
+\mathrm{tr}(\mathbf S) = \sum_{i=1}^n \frac{1}{1+\lambda \gamma_i}
+,\]
+This is *Generalized Cross Validation* (GCV).
+
+
+
+
+
+LOOCV vs. GCV
+========================================================
+
+When $\lambda$ value is given, decompositions provide little speedup.
+
+But GCV is much faster than LOOCV for optimizing — we don't need $\mathbf S_\lambda$
+
+Using `bench::mark()` on `Nuuk_year` data.
+
+
+```
+# A tibble: 4 x 6
+  expression           min   median `itr/sec` mem_alloc `gc/sec`
+  <bch:expr>      <bch:tm> <bch:tm>     <dbl> <bch:byt>    <dbl>
+1 LOOCV (λ given)   4.04ms   5.61ms      145.     1.1MB     2.05
+2 GCV (λ given)     3.56ms   4.13ms      226.    1.32MB     6.46
+3 LOOCV (opt)       4.66ms   5.51ms      171.    1.84MB     6.59
+4 GCV (opt)         4.04ms   4.36ms      217.     1.2MB     6.58
+```
+
+With great displeasure, we move forward with LOOCV..
 
 Spline smoothing with LOOCV
 ========================================================
 We now implement spline smoothing with objective function for determining tuning parameter $\lambda$ being LOOCV. 
 
-
 ```r
 myLoocv <- function(x,y,
-  p, #number of splines where p <n 
+  p, #number of splines where p < n 
   interval, #interval in which to search for tuning parameter
   optimize = TRUE, #whether to optimize or not
   lambda = NULL #lambda value to compute with given we do not optimize
@@ -222,15 +212,15 @@ Given we want $p$ splines, we supply `knots` with the value `p - 2`, though we c
 
 Spline smoothing with LOOCV
 ========================================================
-<img src="slides-figure/unnamed-chunk-10-1.png" title="plot of chunk unnamed-chunk-10" alt="plot of chunk unnamed-chunk-10" width="70%" style="display: block; margin: auto;" />
+<img src="slides-figure/unnamed-chunk-7-1.png" title="plot of chunk unnamed-chunk-7" alt="plot of chunk unnamed-chunk-7" width="70%" style="display: block; margin: auto;" />
 
 
 Spline smoothing with LOOCV: Difference
 ========================================================
-<img src="slides-figure/unnamed-chunk-11-1.png" title="plot of chunk unnamed-chunk-11" alt="plot of chunk unnamed-chunk-11" width="70%" style="display: block; margin: auto;" />
+<img src="slides-figure/unnamed-chunk-8-1.png" title="plot of chunk unnamed-chunk-8" alt="plot of chunk unnamed-chunk-8" width="70%" style="display: block; margin: auto;" />
 
 ```
-[1] -0.02219169  0.02276205
+[1] -0.10383021  0.07816409
 ```
 
 Spline smoothing with LOOCV: Performance
@@ -256,13 +246,13 @@ Spline smoothing with LOOCV: Performance (p)
 ========================================================
 As foreseen, our method is much less efficient than `smooth.spline`.
 We continue the comparison by seeing the methods performance for different number of splines $p$. 
-<img src="Different number of observations-1.png" title="plot of chunk unnamed-chunk-12" alt="plot of chunk unnamed-chunk-12" width="40%" style="display: block; margin: auto;" />
+<img src="Different number of observations-1.png" title="plot of chunk unnamed-chunk-9" alt="plot of chunk unnamed-chunk-9" width="40%" style="display: block; margin: auto;" />
 Median time complexity of our method seems quadratic at best while that of `smooth.spline()` is linear. 
 This is of no suprise as we are computing the smoothing matrix (Matrix multiplication).
 
 Spline smoothing with LOOCV: Performance (n)
 ========================================================
-<img src="Different number of splines-1.png" title="plot of chunk unnamed-chunk-13" alt="plot of chunk unnamed-chunk-13" width="40%" style="display: block; margin: auto;" />
+<img src="Different number of splines-1.png" title="plot of chunk unnamed-chunk-10" alt="plot of chunk unnamed-chunk-10" width="40%" style="display: block; margin: auto;" />
 
 Likewise we see that time complexity is at least quadratic for our solution and linear at worst for R's `smooth.spline`, though this comparisson is troublesome by the requirement $n < p$. 
 
@@ -274,4 +264,99 @@ One should note that we require substantially less computing time if $p$ is low.
 
 
 
+APPENDIX Simple smoother function
+========================================================
+We are now ready to write our first (slow) smoother function (using GCV as oppossed to LOOCV):
 
+
+```r
+Phi <- splineDesign(c(rep(range(x), 3), x), x)
+Omega <- pen_mat(x)
+  
+smoother <- function(lambda) {
+  Phi %*% solve(
+    crossprod(Phi) + lambda * Omega, 
+    t(Phi) %*% y
+  )
+}
+```
+
+Simple smoother function
+========================================================
+
+
+```r
+gcv <- function(lambda) {
+  S <- Phi %*% solve(crossprod(Phi) + lambda * Omega, t(Phi))
+  df <- sum(diag(S))  # The trace of the smoother matrix
+  sum(((y - S %*% y) / (1 - df / length(y)))^2, na.rm = TRUE) 
+}
+
+lambda <- seq(50, 250, 2)
+GCV <- sapply(lambda, gcv)
+lambda_opt <- NULL
+lambda_opt$gcv <- lambda[which.min(GCV)]
+```
+
+
+Simple smoother function
+========================================================
+<img src="slides-figure/unnamed-chunk-13-1.png" title="plot of chunk unnamed-chunk-13" alt="plot of chunk unnamed-chunk-13" width="40%" style="display: block; margin: auto;" />
+
+Simple smoother function
+========================================================
+We can test that this works:
+
+
+
+
+```
+processing file: slides.Rpres
+── Attaching packages ─────────────────────────────────────────────── tidyverse 1.3.0 ──
+✓ ggplot2 3.3.2     ✓ purrr   0.3.4
+✓ tibble  3.0.3     ✓ dplyr   1.0.0
+✓ tidyr   1.1.0     ✓ stringr 1.4.0
+✓ readr   1.3.1     ✓ forcats 0.5.0
+── Conflicts ────────────────────────────────────────────────── tidyverse_conflicts() ──
+x dplyr::filter() masks stats::filter()
+x dplyr::lag()    masks stats::lag()
+Parsed with column specification:
+cols(
+  Year = col_double(),
+  `1` = col_double(),
+  `2` = col_double(),
+  `3` = col_double(),
+  `4` = col_double(),
+  `5` = col_double(),
+  `6` = col_double(),
+  `7` = col_double(),
+  `8` = col_double(),
+  `9` = col_double(),
+  `10` = col_double(),
+  `11` = col_double(),
+  `12` = col_double()
+)
+`summarise()` ungrouping output (override with `.groups` argument)
+Quitting from lines 445-446 (slides.Rpres) 
+Fejl: Aesthetics must be either length 1 or the same as the data (147): y
+Backtrace:
+     █
+  1. └─knitr::knit("slides.Rpres", output = "slides.md", encoding = "UTF-8")
+  2.   └─knitr:::process_file(text, output)
+  3.     ├─base::withCallingHandlers(...)
+  4.     ├─knitr:::process_group(group)
+  5.     └─knitr:::process_group.block(group)
+  6.       └─knitr:::call_block(x)
+  7.         └─knitr:::block_exec(params)
+  8.           ├─knitr:::in_dir(...)
+  9.           └─knitr:::evaluate(...)
+ 10.             └─evaluate::evaluate(...)
+ 11.               └─evaluate:::evaluate_call(...)
+ 12.                 ├─base:::handle(...)
+ 13.                 ├─base::withCallingHandlers(...)
+ 14.                 ├─base::withVisible(value_fun(ev$value, ev$visible))
+ 15.                 └─knitr:::value_fun(ev$value, ev$visible)
+ 16.                   └─knitr:::fun(x, options = options)
+ 17.                     ├─base::withVisible(knit
+Kørsel stoppet
+```
