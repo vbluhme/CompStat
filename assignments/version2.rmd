@@ -1,0 +1,274 @@
+---
+title: "Bivariate Smoothing (document)"
+author: "Viktor Bluhme Jeppesen and Malte Nikolajsen"
+date: "9/8/2020"
+output: html_document
+
+
+header-includes:
+    - \newcommand{\argmin}{\mathop{\mathrm{argmin}}\limits}
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(splines)
+library(latex2exp)
+library(microbenchmark)
+library(testthat)
+library(cowplot)
+set.seed(1)
+knitr::opts_chunk$set(
+	fig.align = "center",
+	fig.pos = "h",
+	cache = TRUE,
+	cache.lazy = TRUE,
+	dev.args = list(bg = "transparent"),
+	out.width = "70%"
+)
+theme_set(theme_bw(base_size=12))
+
+Nuuk <- read_table2("nuuk.dat.txt", 
+                    col_names = c("Year", 1:12), 
+                    na = "-999", 
+                    skip = 1) %>% 
+  gather(key = "Month", value = "Temperature", -Year, convert = TRUE) %>% 
+  mutate(Temperature = Temperature / 10) %>% 
+  filter(Year > 1866)
+Nuuk_year <- group_by(Nuuk, Year) %>% 
+  summarise(
+    Temperature = mean(Temperature),
+    Median = median(Temperature),
+    High = max(Temperature), 
+    Low = min(Temperature)
+  )
+n <- nrow(Nuuk_year)
+x <- Nuuk_year$Year
+y <- Nuuk_year$Temperature
+df <- tibble(x, y)
+pp <- ggplot(df, aes(x, y))
+```
+
+## Splines
+
+Given points $\{(x_1,y_1), \dots, (x_n, y_n)\}$, we want to implement the smoother which solves
+\[
+\min_{f \in C^2}\quad L(f) = \sum_{i=1}^n\big(y_i - f(x_i)\big)^2 + \lambda \|f''\|_2^2
+\]
+All solutions belong to the $n$-dimensional vector space consisting of cubic splines with knots in $\mathbf x = (x_1, \dots, x_n)$, independently of $\mathbf y$. Thus all candidate solutions can be written
+\[
+f = \sum_{i=1}^n \beta_i \varphi_i
+\]
+for a basis $\varphi_1, \dots, \varphi_n$ of cubic splines, or more concisely $\mathbf f = \boldsymbol \Phi \beta$ for $\mathbf f = (f(x_1), \dots, f(x_n))$ and $\boldsymbol \Phi_{ij} = \varphi_j(x_i)$. We use this to rewrite the loss function as
+\[
+L(f) = (\mathbf y - \boldsymbol \Phi\beta)'(\mathbf y - \boldsymbol \Phi\beta) + \lambda\beta'\boldsymbol \Omega\beta
+\]
+where
+\[
+\boldsymbol \Omega_{ij} = \langle\varphi_i'', \varphi_j''\rangle = \int \varphi_i''\varphi_j''\, dm.
+\]
+The minimizer is given by
+\[
+\hat{\mathbf{f}} = \boldsymbol\Phi(\boldsymbol\Phi'\boldsymbol\Phi + \lambda\boldsymbol\Omega)^{-1}\boldsymbol\Phi'\mathbf y \equiv \mathbf S_\lambda\mathbf y.
+\]
+We must overcome two computational challenges, namely 1) how to evaluate $\boldsymbol\Omega$ and 2) how to efficiently calculate $\mathbf S_{\lambda}$.
+
+First, we find a function to evaluate $\boldsymbol\Omega$. From CSwR, using Simpson's rule:
+
+```{r penalty_matrix}
+pen_mat <- function(inner_knots) {
+  knots <- sort(c(rep(range(inner_knots), 3), inner_knots))
+  d <- diff(inner_knots)  # The vector of knot differences; b - a 
+  g_ab <- splineDesign(knots, inner_knots, derivs = 2) 
+  knots_mid <- inner_knots[-length(inner_knots)] + d / 2
+  g_ab_mid <- splineDesign(knots, knots_mid, derivs = 2)
+  g_a <- g_ab[-nrow(g_ab), ]
+  g_b <- g_ab[-1, ]
+  (crossprod(d * g_a,  g_a) + 
+      4 * crossprod(d * g_ab_mid, g_ab_mid) + 
+      crossprod(d * g_b, g_b)) / 6 
+}
+```
+
+Steps for efficient calculation of $\mathbf S_\lambda = \boldsymbol\Phi(\boldsymbol\Phi'\boldsymbol\Phi + \lambda\boldsymbol\Omega)^{-1}\boldsymbol\Phi'$
+
+1. Single-value decomposition $\Phi = UDV'$.
+
+2. Diagonalize the matrix $D^{-1}V'\Phi VD^{-1} = W\Gamma W'$.
+
+3. Then 
+\begin{equation}\label{eq:S_decomp}
+\mathbf S_\lambda = \widetilde U(I + \lambda \Gamma)^{-1}\widetilde U'
+\end{equation}
+for $\widetilde U = UW$.
+
+Step-by-step version for implementation:
+
+- First, the coefficients $\hat\beta = \widetilde U'y$ are computed for expanding $y$ in the basis given by the columns of $\widetilde U$.
+
+- Second, the $i$-th coefficient is shrunk towards $0$,
+\[
+\hat\beta_i(\lambda) = \frac{\hat\beta_i}{1+\lambda\gamma_i}.
+\]
+
+- Third, the smoothed values $\widetilde U\hat\beta_i(\lambda)$ are computed as an expansion using the shrunken coefficients.
+
+We implement the decomposition.
+```{r decomposition}
+myDecomposition <- function(x, y, p) {
+  inner_knots <- seq(min(x), max(x), length.out = p - 2)
+  
+  Phi <- splineDesign(c(rep(range(inner_knots), 3), inner_knots), x)
+  Omega <- pen_mat(inner_knots)
+  
+  Phi_svd <- svd(Phi)
+  Omega_tilde <- t(crossprod(Phi_svd$v, Omega %*% Phi_svd$v)) / Phi_svd$d
+  Omega_tilde <- t(Omega_tilde) / Phi_svd$d
+  Omega_tilde_svd <- svd(Omega_tilde)  
+  U_tilde <- Phi_svd$u %*% Omega_tilde_svd$u
+  
+  structure(list(U_tilde = U_tilde, Gamma = Omega_tilde_svd$d), class = "customDecomposition")
+}
+```
+
+We are to find the optimal tuning parameter $\hat \lambda$ using LOOCV
+
+\[
+\hat \lambda 
+=
+\argmin_{\lambda \in \mathbb R_+}
+\text{LOOCV}(\lambda)
+=
+\argmin_{\lambda \in \mathbb R_+}
+\sum_{i = 1, \ldots, n}
+\left(
+\frac{
+y_i - \hat f^{-i}
+}{
+1 - S_{i,i}
+}
+\right)^2
+\]
+
+In writing the `r`-implementation, it should expect class `customDecomposition`. 
+
+In an efficient implementation, we should not compute the smoother matrix $S_\lambda$, only its diagonal. 
+Letting $\text{diag}(A) = (a_{1,1}, \ldots, a_{m,m})$ for any square matrix $A \in M_{m, m}(\mathbb R)$, we observe for $\widetilde U(I + \lambda \Gamma)^{-1}\widetilde U' \in M_{n,n}(\mathbb R)$
+
+\[
+\text{diag}(\widetilde U(I + \lambda \Gamma)^{-1}\widetilde U')
+=
+\left (
+  \sum_{j = 1}^p \tilde u_{i, j}^2 / (1 + \lambda_j \Gamma_{j,j})
+\right )_{i = 1, \ldots, n}
+\]
+
+This gives the following efficient implementation of LOOCV. 
+```{r loocv}
+myLOOCV <- function(lambda, decomp, y) {
+  expect_s3_class(decomp, "customDecomposition")
+  f_hat <- t(decomp$U_tilde) %*% y
+  f_hat <- f_hat / (1 + lambda * decomp$Gamma)
+  f_hat <- decomp$U_tilde %*% f_hat
+  diag <- decomp$U_tilde^2 %*% as.matrix(1 / (1 + lambda * decomp$Gamma))
+  sum((y - f_hat)^2 / (1 - diag)^2)
+}
+```
+Alternatively, we could just compute the smoothing matrix $S_\lambda$.
+```{r loocv inefficient}
+myAltLOOCV <- function(lambda, decomp, y) {
+  expect_s3_class(decomp, "customDecomposition")
+  S <- t(decomp$U_tilde)
+  S <- S / (1 + lambda * decomp$Gamma)
+  S <- decomp$U_tilde %*% S
+  diag <- diag(S)
+  sum((y - S %*% y)^2 / (1 - diag)^2)
+}
+```
+```{r loocv simulation data, cache = TRUE, echo = FALSE}
+n <- 10000
+x.sim <- 1:n
+y.sim <- c(0, cumsum(rnorm(n - 1)))
+```
+```{r loocv compared, echo = FALSE}
+wrapper.MyLoocv <- function(p, lambda) {
+  decomp <- myDecomposition(x.sim, y.sim, p)
+  myLOOCV(lambda, decomp, y.sim)
+}
+wrapper.MyAltLoocv <- function(p, lambda) {
+  decomp <- myDecomposition(x.sim, y.sim, p)
+  myAltLOOCV(lambda, decomp, y.sim)  
+}
+myBenchOnLoocv <- press(
+  lambda <- c(50, 100, 150),
+  p <- c(4000, 5000, 6000),
+  {
+    data <- wrapper.MyLoocv(p, lambda)
+    mark(data(p, lambda))
+  }
+)
+myBenchOnLoocv
+```
+
+
+
+
+
+
+
+```{r smoothing, message=FALSE}
+mySmoothing <- function(
+  ..., data, p = NULL, lambda = NULL, m = 300
+) {
+  ord <- order(data$x)
+  x <- data$x[ord]
+  y <- data$y[ord]
+  nx <- length(x)
+  if (is.null(p)) {
+    p <- .nknots.smspl(nx)
+  }
+  decomp <- myDecomposition(x, y, p)
+  if (is.null(lambda)) {
+    lambda <- optimize(myLOOCV, c(0, m), decomp = decomp, y = y, tol = )$minimum
+  }
+  f_hat <- t(decomp$U_tilde) %*% y
+  f_hat <- f_hat / (1 + lambda * decomp$Gamma)
+  f_hat <- decomp$U_tilde %*% f_hat
+  structure(
+    list(x = x, y = f_hat), class = "mySmoothing" 
+  )
+}
+predict.mySmoothing <- function(
+  object, newdata, ...
+) {
+  approx(object$x, object$y, newdata$x)$y
+}
+splineSmoothingR <- smooth.spline(df$x, df$y, cv = TRUE)
+```
+```{r smoothing-plots, echo = FALSE, cache = TRUE, out.height = 10, out.width = 12}
+plot1 <- (pp + 
+    labs(x = "Year", y = "Mean temperature") +
+    theme(legend.position = "bottom") +
+    geom_point() +
+    geom_smooth(method = "mySmoothing", se = FALSE, aes(colour = "mySmoothing-method")) + 
+    geom_line(aes(x, y, colour = "smooth.spline-method"), tibble(x = splineSmoothingR$x, y = splineSmoothingR$y)) +
+    scale_colour_manual("", values = c("blue", "red")))
+temp.mySmooth <- mySmoothing(data = df)
+df.plot2 <- tibble(
+  x = df$x,
+  y = temp.mySmooth$y - splineSmoothingR$y)
+plot2 <- (pp +
+    labs(x = "Year", y = "Mean temperature fitted difference") +
+    theme(legend.position = "bottom") +
+    geom_line(aes(x, y, colour = "Numeric difference"), tibble(x = df$x, y = temp.mySmooth$y - splineSmoothingR$y)) + 
+    scale_colour_manual("", values = c("black")))
+plot_grid(plot1, plot2, rel_widths = c(1.5, 1.5))
+```
+
+
+
+
+
+
+
+
+
