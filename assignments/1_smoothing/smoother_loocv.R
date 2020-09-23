@@ -25,7 +25,7 @@ decompose_S <- function(Phi, Omega) {
   list(U_tilde = U_tilde, Gamma = Omega_tilde_svd$d)
 }
 
-smooth_loocv <- function(..., data, p = NULL, lambda = NULL, m = 300, decompose = TRUE) {
+mySmoothing <- function(..., data, p = NULL, lambda = NULL, m = 300, decompose = TRUE) {
   ord <- order(data$x)
   x <- data$x[ord]
   y <- data$y[ord]
@@ -72,5 +72,8 @@ smooth_loocv <- function(..., data, p = NULL, lambda = NULL, m = 300, decompose 
   }
   
   structure(list(x = x, y = f_hat), class = "mySmoothing")
+}
+predict.mySmoothing <- function(object, newdata, ...) {
+  approx(object$x, object$y, newdata$x)$y
 }
 
