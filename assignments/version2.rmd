@@ -16,6 +16,7 @@ library(latex2exp)
 library(microbenchmark)
 library(testthat)
 library(cowplot)
+library(bench)
 set.seed(1)
 knitr::opts_chunk$set(
 	fig.align = "center",
@@ -27,7 +28,7 @@ knitr::opts_chunk$set(
 )
 theme_set(theme_bw(base_size=12))
 
-Nuuk <- read_table2("nuuk.dat.txt", 
+Nuuk <- read_table2("data/nuuk.dat.txt", 
                     col_names = c("Year", 1:12), 
                     na = "-999", 
                     skip = 1) %>% 
@@ -189,26 +190,6 @@ n <- 10000
 x.sim <- 1:n
 y.sim <- c(0, cumsum(rnorm(n - 1)))
 ```
-```{r loocv compared, echo = FALSE}
-wrapper.MyLoocv <- function(p, lambda) {
-  decomp <- myDecomposition(x.sim, y.sim, p)
-  myLOOCV(lambda, decomp, y.sim)
-}
-wrapper.MyAltLoocv <- function(p, lambda) {
-  decomp <- myDecomposition(x.sim, y.sim, p)
-  myAltLOOCV(lambda, decomp, y.sim)  
-}
-myBenchOnLoocv <- press(
-  lambda <- c(50, 100, 150),
-  p <- c(4000, 5000, 6000),
-  {
-    data <- wrapper.MyLoocv(p, lambda)
-    mark(data(p, lambda))
-  }
-)
-myBenchOnLoocv
-```
-
 
 
 
