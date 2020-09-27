@@ -47,8 +47,6 @@ plot2 <- Nuuk_year %>%
 plot_grid(plot1, plot2, rel_widths = c(1.5, 1.5))
 
 
-
-
 ## COMPARE SPEED BASED ON SIMULATED DATA ----
 sim <- function(n, a, b, trend_fun, rand_fun, ...) {
   x <- runif(n, a, b)
@@ -62,33 +60,30 @@ sim(1000, 0, 10, f, rnorm) %>% ggplot(aes(x, y)) +
   geom_point() +
   geom_smooth(method = "mySmoothing", se = FALSE)
 
-n_list <- seq(10, 500, 50)
-median_df <- tibble(n = NA, method = NA, median = NA, ms = NA)
+n_list <- seq(50, 500, 50)
+bench_df <- NULL
 for(n in n_list) {
   df <- sim(n, 0, 10, f, rnorm)
   benchmark <- bench::mark(
     "Decomp, LOOCV" = {mySmoothing(data = df, decompose = TRUE); 1},
-    # "No decomp, LOOCV" = {mySmoothing(data = df, decompose = FALSE); 1},
-    "Decomp, lambda given" = {mySmoothing(data = df, lambda = 50, decompose = TRUE); 1},
+    "No decomp, LOOCV" = {mySmoothing(data = df, decompose = FALSE); 1},
+    # "Decomp, lambda given" = {mySmoothing(data = df, lambda = 50, decompose = TRUE); 1},
     # "No decomp, lambda given" = {mySmoothing(data = df, lambda = 50, decompose = FALSE); 1},
     "smooth.spline" = {smooth.spline(df$x, df$y, cv = TRUE); 1},
-    iterations = 100
+    iterations = 20
   )
   median = as.numeric(benchmark$median)*1000
-  ms <- map(1:length(benchmark$min), ~ tibble(ms = as.numeric(benchmark$time[[.]])*1000))
+  ms <- map(seq_along(benchmark$time), ~ tibble(ms = as.numeric(benchmark$time[[.]])*1000))
   labs <- attr(benchmark$expression, "description")
-  tmp_df <- tibble(n = n, method = labs, median = median, ms = ms)
-  median_df <- bind_rows(median_df, tmp_df)
+  bench_df <- bind_rows(bench_df, tibble(n = n, method = labs, median = median, ms = ms))
 }
-median_df <- median_df[-1,]
 
-median_df %>% 
-  filter(method %in% c("smooth.spline", "Decomp, LOOCV")) %>% 
+bench_df %>% 
   unnest(ms) %>% 
   group_by(n, method) %>% 
-  filter(ms <= quantile(ms, 0.95)) %>%  # Filter out 5% slowest for each n
   ungroup() %>% 
   ggplot(aes(x = n, y = ms, col = method)) + 
   geom_jitter(aes(fill = method), size = 1, shape = 21, stroke = 0, height = 0, width = 7) +
   geom_line(aes(x = n, y = median)) +
-  scale_colour_manual(values=c("black", "black"))
+  scale_colour_manual(values=rep("black", 5)) +
+  scale_y_log10()
