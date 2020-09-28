@@ -4,10 +4,10 @@ library(microbenchmark)
 library(bench)
 library(tidyverse)
 
-N_sim <- 10^4             # Total number of simulations
+N_sim <- 5*10^4             # Total number of simulations
 n <- 100                  # Length of each random walk (same as n in assignment text)
 S0 <- 30                  # Initial wealth (= 30 in assignment)
-X_min = -1.9; X_max = 2   # Support of X ~ Unif(X_min, X_max)
+X_min <- -1.9; X_max <- 2 # Support of X ~ Unif(X_min, X_max)
 
 # Do they return same ruin probabilities?
 set.seed(100)
@@ -33,15 +33,10 @@ qplot(1:N_sim, B) +
   geom_point() 
 
 # Benchmark: 
+# - Both implementations are O(N_sim)
 # - Rcpp faster than R implementation. Advantage grows with N_sim.
 # - Last line shows just simulation of N_sim * n uniform RVs. This is a lower bound for both functions.
 # - Rcpp adds only 1-2 ms after simulation.
-bench::mark(
-  "Base R" = {ruin_MC(N_sim, n, S0, runif, X_min, X_max); 1},
-  "Rcpp" = {ruin_MC_rcpp(N_sim, n, S0, runif, X_min, X_max); 1},
-  "runif" = {runif(N_sim * n, -1.9, 2); 1}
-)
-
 pressed <- bench::press(
   N_sim = 10^(1:4),
   {
