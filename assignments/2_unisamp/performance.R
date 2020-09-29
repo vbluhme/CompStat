@@ -3,6 +3,9 @@ library(profvis)
 library(microbenchmark)
 library(bench)
 library(tidyverse)
+library(patchwork)
+library(plotly)
+options(scipen=999)
 
 n <- 100                  # Length of each random walk (same as n in assignment text)
 S0 <- 30                  # Initial wealth (= 30 in assignment)
@@ -103,3 +106,54 @@ cummean %>%
   facet_wrap(~ type) +
   coord_cartesian(ylim = c(0.001, 0.0025)) +
   theme(legend.position = "none")
+
+
+
+#### How do we choose theta? ----
+# Warning: Takes a while to run
+N_sim <- 50000; k <- 50
+cummean <- tibble()
+for (i in 1:k) {
+  for (theta in seq(-0.3, -0.16, 0.02)) {
+    IS <- ruin_IS_rcpp(N_sim, n, S0, X_min, X_max, theta)
+    cummean <- cummean %>% bind_rows(tibble(theta = theta, i = i, N = 1:N_sim, cummean = IS))
+  }
+}
+
+p1 <- cummean %>% 
+  filter(N %% 10000 == 0) %>% 
+  group_by(theta, N) %>% 
+  summarise(sd = sd(cummean)) %>% 
+  mutate(text = paste("N =", N, "\n θ =", theta, "\n log sd =", round(log(sd), 3))) %>% 
+  ggplot(aes(x = theta, y = sd, col = factor(N), group = N, text = text)) +
+  geom_line() +
+  geom_point() +
+  scale_y_log10()
+
+p2 <- cummean %>% 
+  filter(N %% 5000 == 0) %>% 
+  # filter(round(100*theta) %% 4 == 0) %>% 
+  group_by(theta, N) %>% 
+  summarise(sd = sd(cummean)) %>% 
+  mutate(text = paste("N =", N, "\n θ =", theta, "\n log sd =", round(log(sd), 3))) %>% 
+  ggplot(aes(x = N, y = sd, col = factor(theta), group = theta, text = text)) +
+  geom_line() +
+  geom_point() +
+  scale_y_log10()
+
+p3 <- cummean %>% 
+  filter(N %% 10000 == 0) %>% 
+  group_by(theta, N) %>% 
+  summarise(sd = sd(cummean)) %>% 
+  mutate(text = paste("N =", N, "\n θ =", theta, "\n log sd =", round(log(sd), 3))) %>%  
+  ggplot(aes(x = N, y = theta, fill = sd, text = text)) +
+  geom_tile()
+
+p1 | p2
+
+(p1 / p3) | p2
+
+# Plotly versions
+ggplotly(p1, tooltip = "text")
+ggplotly(p2, tooltip = "text")
+ggplotly(p3, tooltip = "text")
