@@ -1,0 +1,160 @@
+---
+title: "Importance Sampling, performance"
+author: "Viktor Bluhme Jeppesen and Malte Nikolajsen"
+date: "29/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+```{r import, include=FALSE}
+source("assignments/2_unisamp/main.R")
+library(profvis)
+library(microbenchmark)
+library(bench)
+library(tidyverse)
+library(patchwork)
+```
+
+First set basic parameters:
+
+```{r}
+n <- 100                  # Length of each random walk (same as n in assignment text)
+S0 <- 30                  # Initial wealth (= 30 in assignment)
+X_min <- -1.9; X_max <- 2 # Support of X ~ Unif(X_min, X_max)
+theta <- -0.3             # Theta in Importance Sampling
+```
+
+The probability of ruin is approximately
+
+```{r}
+ruin_IS_rcpp(10^6, n, S0, X_min, X_max, theta)[10^6]
+```
+
+We first check that the R and Rcpp implementations return same values. For Monte Carlo:
+
+```{r}
+N_sim <- 1000
+set.seed(100)
+A <- ruin_MC(N_sim, n, S0, X_min, X_max)
+set.seed(100)
+B <- ruin_MC_rcpp(N_sim, n, S0, X_min, X_max)
+
+all.equal(A, B) # True
+```
+
+For Importance Sampling:
+
+```{r}
+set.seed(100)
+A <- ruin_IS(N_sim, n, S0, X_min, X_max, theta)
+set.seed(100)
+B <- ruin_IS_rcpp(N_sim, n, S0, X_min, X_max, theta)
+
+all.equal(A, B) # True
+```
+
+For Monte Carlo, confidence bands are given by $\pm 1.96 * \sqrt{\hat p_N (1-\hat p_N) / N}$, where
+\[
+\hat p_N = \frac1N \sum_{i=1}^N h(X^{(i)}), \quad h(X_i) = 1_{(\exists k \leq n \mid S_k \leq 0)}(X^{(i)})
+.\]
+These are shown here for one sample path of the cummulative mean:
+
+```{r}
+N_sim <- 10^5
+tibble(N = 1:N_sim, cummean = ruin_MC_rcpp(N_sim, n, S0, X_min, X_max)) %>% 
+  filter(N %% 10 == 0) %>% 
+  mutate(p = cummean) %>% 
+  ggplot(aes(x = N, y = cummean)) +
+  geom_ribbon(
+    mapping = aes(
+      ymin = pmax(0, cummean - 1.96 * sqrt(p*(1-p) / N)),
+      ymax = pmin(1, cummean + 1.96 * sqrt(p*(1-p) / N))
+    ), fill = "gray") +
+  coord_cartesian(ylim = c(0, 0.005)) +
+  geom_line()
+```
+
+## Benchmarking
+
+For a total of $1000$ simulations, the benchmark numbers look like:
+```{r}
+N_sim <- 10^3
+bench::mark(
+  "MC R" = {ruin_MC(N_sim, n, S0, X_min, X_max); 1},
+  "MC Rcpp" = {ruin_MC_rcpp(N_sim, n, S0, X_min, X_max); 1},
+  "IS R" = {ruin_IS(N_sim, n, S0, X_min, X_max, theta); 1},
+  "IS Rcpp" = {ruin_IS_rcpp(N_sim, n, S0, X_min, X_max, theta); 1},
+)
+```
+We now benchmark for $10, 100, 1000, 10000$ simulations and plot the median times.
+
+```{r}
+pressed <- bench::press(
+  N_sim = 10^(1:4),
+  {
+    bench::mark(
+      "MC R" = {ruin_MC(N_sim, n, S0, X_min, X_max); 1},
+      "MC Rcpp" = {ruin_MC_rcpp(N_sim, n, S0, X_min, X_max); 1},
+      "IS R" = {ruin_IS(N_sim, n, S0, X_min, X_max, theta); 1},
+      "IS Rcpp" = {ruin_IS_rcpp(N_sim, n, S0, X_min, X_max, theta); 1},
+      iterations = 100
+    )
+  }
+)
+```
+
+```{r}
+p1 <- autoplot(pressed)
+p2 <- pressed %>% 
+  mutate(Method = attr(expression, "description")) %>% 
+  ggplot(aes(x = N_sim, y = median, color = Method)) +
+  geom_line() +
+  geom_point() +
+  scale_x_log10() +
+  theme(legend.position = "none") +
+  ggtitle("Log-log plot")
+
+p3 <- pressed %>% 
+  mutate(Method = attr(expression, "description")) %>% 
+  ggplot(aes(x = N_sim, y = median, color = Method)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous()  +
+  ggtitle("Linear axes")
+
+p1 / 
+(p2 | p3) +
+  plot_layout(heights = c(1.5, 1))
+```
+
+Importance Sampling is much more efficient than pure Monte Carlo integration.
+
+```{r}
+set.seed(1000)
+
+## Plot of sample paths for cumulative mean
+k <- 10         # Number of sample paths simulated
+N_sim <- 10^5   # Number of simulations per sample path
+
+cummean <- tibble()
+for (i in 1:k) {
+  MC <- ruin_MC_rcpp(N_sim, n, S0, X_min, X_max)
+  IS <- ruin_IS_rcpp(N_sim, n, S0, X_min, X_max, theta)
+  cummean <- cummean %>% bind_rows(tibble(type = "MC", i = i, N = 1:N_sim, cummean = MC))
+  cummean <- cummean %>% bind_rows(tibble(type = "IS", i = i, N = 1:N_sim, cummean = IS))
+}
+cummean %>% 
+  filter(N %% 100 == 0) %>%
+  ggplot(aes(x = N, y = cummean, col = as.factor(i))) +
+  geom_line() +
+  facet_wrap(~ type) +
+  coord_cartesian(ylim = c(0.001, 0.0025)) +
+  theme(legend.position = "none")
+
+```
+
+
