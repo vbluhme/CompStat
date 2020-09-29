@@ -28,25 +28,41 @@ ruin_MC_rcpp <- function(N_sim, n, S0, X_gen, ...) {
 # rg simulerer fra tætheden g. Udregnet ved at invertere fordelingsfunktionen.
 # h er funktionen, vi vil kende middelværdi af
 # 
-# Det lader faktisk til at virke.
-g <- function(X, theta) {
+# Tætheden g har middelværdi approksimativt lig theta, så sæt theta = -0.3 for at opnå ~50% ruin.
+g <- function(x, theta) {
   phi <- 1/theta*(exp(theta*2) - exp(-theta*1.9))
-  exp(theta*sum(X))/phi^(length(X))
+  exp(theta*x)/phi
 }
-
-f <- function(X) prod(dunif(X, -1.9, 2))
-wstar <- function(X, theta) f(X) / g(X, theta) 
-
+g_multi <- function(X, theta) {
+  phi <- 1/theta*(exp(theta*2) - exp(-theta*1.9))
+  n <- length(X)
+  exp(theta*sum(X))/phi^n
+}
 rg <- function(n, theta) {
   Y <- runif(n)
   phi <- 1/theta*(exp(theta*2) - exp(-theta*1.9))
   1/theta*log(Y*phi*theta + exp(-1.9*theta))
-}  
+}
+
+f <- function(X) prod(dunif(X, -1.9, 2))
+wstar <- function(X, theta) f(X) / g_multi(X, theta) 
 
 h <- function(X, S0) {
   min(cumsum(X)) <= -S0
 }
 
-X <- lapply(rep(100, 10^4), rg, theta)
+theta <- -1/3
+X <- lapply(rep(100, 10^5), rg, theta)
 apply_f <- function(X) h(X, 30)*wstar(X, theta)
-mean(sapply(X, apply_f))
+cummean <- cumsum(sapply(X, apply_f))/ (1:10^5)
+plot(cummean); abline(h = cummean[10^5], col = "red")
+
+
+# The simulation function rg() works :)
+par(mfrow = c(2,2))
+for(theta in c(-1.5, -0.5, 0.5, 1.5)) {
+  tmp_g <- function(x) g(x, theta)
+  hist(rg(10^5, theta), prob = T, breaks = 80, main = paste("θ =", theta), xlab = "")
+  curve(tmp_g, col = "red", add = T)
+}
+par(mfrow = c(1,1))
